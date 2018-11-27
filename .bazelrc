@@ -1,0 +1,8 @@
+# Note: no-implicit-fallthrough only exists in clang. Bazel's standard
+# gcc-clang hybrid (which runs both) needs the flag to compile successfully
+# with clang. The Android config, however, is gcc-only. However, we do not
+# need to prefix with -Xclang-only since, as of gcc 4.4, unknown -Wno-*
+# flags are ignored. See https://gcc.gnu.org/gcc-4.4/changes.html
+build --copt=-Wno-implicit-fallthrough
+build --features=-layering_check
+build --features=-parse_headers

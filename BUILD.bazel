@@ -6,33 +6,18 @@
 # Description:
 #   The Google3 version of v8.
 
-package(
-    # Note: no-implicit-fallthrough only exists in clang. Blaze's standard
-    # gcc-clang hybrid (which runs both) needs the flag to compile successfully
-    # with clang. The Android config, however, is gcc-only. However, we do not
-    # need to prefix with -Xclang-only since, as of gcc 4.4, unknown -Wno-*
-    # flags are ignored. See https://gcc.gnu.org/gcc-4.4/changes.html
-    default_copts = ["-Wno-implicit-fallthrough"],
-    default_hdrs_check = "loose",
-    default_visibility = [
-        "//visibility:private",
-    ],
-    features = [
-        "-layering_check",
-        "-parse_headers",
-    ],
-)
+package(default_visibility = ["//visibility:private"])
 
-package_group(
-    name = "users",
-    includes = [
-        "//third_party/v8:security_critical_users",
-        "//third_party/v8:users",
-    ],
-    packages = [
-        "...",
-    ],
-)
+#package_group(
+#    name = "users",
+#    includes = [
+#        "//third_party/v8:security_critical_users",
+#        "//third_party/v8:users",
+#    ],
+#    packages = [
+#        "//...",
+#    ],
+#)
 
 # Allmost all of V8 is authored by Google, but there are a few 3rd-party files.
 # The files have their own BUILD rules (named *_3rd_party) with the necessary
@@ -40,6 +25,50 @@ package_group(
 licenses(["notice"])
 
 exports_files(["LICENSE"])
+
+config_setting(
+  name = "is_debug",
+  values = {
+    "compilation_mode": "dbg",
+  },
+)
+
+config_setting(
+  name = "target_cpu_x86_64",
+  values = {
+    "cpu": "x86_64",
+  }
+)
+config_setting(
+  name = "target_cpu_k8",
+  values = {
+    "cpu": "k8"
+  }
+)
+config_setting(
+  name = "target_cpu_x86",
+  values = {
+    "cpu": "x86"
+  }
+)
+config_setting(
+  name = "target_cpu_mips",
+  values = {
+    "cpu": "mips"
+  }
+)
+config_setting(
+  name = "target_cpu_ppc",
+  values = {
+    "cpu": "ppc"
+  }
+)
+config_setting(
+  name = "target_cpu_arm",
+  values = {
+    "cpu": "arm"
+  }
+)
 
 # ------------------------------------------------------------------------------
 #
@@ -558,10 +587,10 @@ py_binary(
         "g3tools/js2c.py",
         "g3tools/jsmin.py",
     ],
-    paropts = [
-        "--strip",
-        "--compile",
-    ],
+#    paropts = [
+#        "--strip",
+#        "--compile",
+#    ],
 )
 
 genrule(
@@ -575,19 +604,17 @@ genrule(
     tools = [":js2c_script"],
 )
 
-vardef("PREDICTABLE", "--random-seed=314159265")
-
 genrule(
     name = "run_mksnapshot_icu",
     outs = ["snapshot_icu.cc"],
-    cmd = "$(location :mksnapshot_icu) " + varref("PREDICTABLE") + " --startup-src $@",
+    cmd = "$(location :mksnapshot_icu) --random-seed=314159265 --startup-src $@",
     tools = [":mksnapshot_icu"],
 )
 
 genrule(
     name = "run_mksnapshot_arm64",
     outs = ["snapshot_arm64.cc"],
-    cmd = "$(location :mksnapshot_with_simulator_arm64) " + varref("PREDICTABLE") + " --startup-src $@",
+    cmd = "$(location :mksnapshot_with_simulator_arm64) --random-seed=314159265 --startup-src $@",
     tools = [":mksnapshot_with_simulator_arm64"],
 )
 
