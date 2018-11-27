@@ -1,3 +1,1057 @@
+# -*- mode: python; -*-
+#
+# Copyright 2007 Google Inc.
+# All Rights Reserved.
+#
+# Description:
+#   The Google3 version of v8.
+
+package(
+    # Note: no-implicit-fallthrough only exists in clang. Blaze's standard
+    # gcc-clang hybrid (which runs both) needs the flag to compile successfully
+    # with clang. The Android config, however, is gcc-only. However, we do not
+    # need to prefix with -Xclang-only since, as of gcc 4.4, unknown -Wno-*
+    # flags are ignored. See https://gcc.gnu.org/gcc-4.4/changes.html
+    default_copts = ["-Wno-implicit-fallthrough"],
+    default_hdrs_check = "loose",
+    default_visibility = [
+        "//visibility:private",
+    ],
+    features = [
+        "-layering_check",
+        "-parse_headers",
+    ],
+)
+
+package_group(
+    name = "users",
+    includes = [
+        "//third_party/v8:security_critical_users",
+        "//third_party/v8:users",
+    ],
+    packages = [
+        "...",
+    ],
+)
+
+# Allmost all of V8 is authored by Google, but there are a few 3rd-party files.
+# The files have their own BUILD rules (named *_3rd_party) with the necessary
+# licenses clause.
+licenses(["notice"])
+
+exports_files(["LICENSE"])
+
+# ------------------------------------------------------------------------------
+#
+#   W A R N I N G :  DEVELOPMENT WORK HAPPENS IN THE GOOGLECODE REPOSITORY
+#
+#   Do not use this package w/o talking first to the V8 team.
+#   Contacts: danno@google.com (Daniel Clifford) - TL in MUC
+#             ulan@google.com (Ulan Degenbaev)
+#
+# ------------------------------------------------------------------------------
+
+# Just the public header files. Only for inclusion by subpackages of V8.
+cc_library(
+    name = "public_v8_header",
+    srcs = glob(["include/*"]),
+    visibility = [":users"],
+)
+
+filegroup(
+    name = "public_v8_header_file",
+    srcs = glob(["include/*"]),
+    visibility = [":users"],
+)
+
+# ------------------------------------------------------------------------------
+# Compiler and linker options
+
+config_setting(
+    name = "is_fastbuild",
+    values = {
+        "compilation_mode": "fastbuild",
+    },
+)
+
+config_setting(
+    name = "is_debug",
+    values = {
+        "compilation_mode": "dbg",
+    },
+)
+
+config_setting(
+    name = "simulator_required_arm64",
+    values = {
+        "host_cpu": "k8",
+        "cpu": "arm64-v8a",
+    },
+)
+
+config_setting(
+    name = "simulator_required_armeabi-v7a",
+    values = {
+        "host_cpu": "k8",
+        "cpu": "armeabi-v7a",
+    },
+)
+
+config_setting(
+    name = "simulator_required_armeabi",
+    values = {
+        "host_cpu": "k8",
+        "cpu": "armeabi",
+    },
+)
+
+COPTS_ANDROID = [
+    "-fdata-sections",
+    "-ffunction-sections",
+    "-finline-limit=64",
+    "-fno-caller-saves",
+    "-fno-exceptions",
+    "-fno-ident",
+    "-fno-rtti",
+    "-fno-short-enums",
+    "-fno-strict-aliasing",
+    "-fomit-frame-pointer",
+    "-fPIC",
+    "-funwind-tables",
+    "-fvisibility=hidden",
+    "-fvisibility-inlines-hidden",
+    "-O2",
+    "-std=gnu++14",
+    "-Wheader-hygiene",
+    "-Winconsistent-missing-override",
+    "-Wno-address-of-packed-member",
+    "-Wno-builtin-macro-redefined",
+    "-Wno-c++11-narrowing",
+    "-Wno-covered-switch-default",
+    "-Wno-enum-compare-switch",
+    "-Wno-implicit-fallthrough",
+    "-Wno-inconsistent-missing-override",
+    "-Wno-missing-field-initializers",
+    "-Wno-nonportable-include-path",
+    "-Wno-null-pointer-arithmetic",
+    "-Wno-tautological-constant-compare",
+    "-Wno-tautological-undefined-compare",
+    "-Wno-tautological-unsigned-zero-compare",
+    "-Wno-undefined-bool-conversion",
+    "-Wno-undefined-var-template",
+    "-Wno-unneeded-internal-declaration",
+    "-Wno-unused-lambda-capture",
+    "-Wno-unused-parameter",
+    "-Wno-user-defined-warnings",
+    "-Wsign-compare",
+    "-Wstring-conversion",
+    "-Wtautological-constant-out-of-range-compare",
+    "-Wtautological-overlap-compare",
+    "-Xclang",
+]
+
+COPTS = [
+    "-DENABLE_LOGGING_AND_PROFILING",
+    "-DENABLE_VMSTATE_TRACKING",
+    "-DENABLE_DISASSEMBLER",
+    "-DENABLE_DEBUGGER_SUPPORT",
+    "-DV8_CONCURRENT_MARKING",
+    "-DV8_FAST_TLS",
+    "-DGOOGLE3",
+    "-Ithird_party/v8/v6_9",
+    "-Ithird_party/v8/v6_9/include",
+    "$(STACK_FRAME_UNLIMITED)",  # interpreter-irregexp.cc
+] + select({
+    "//tools/cc_target_os:android": COPTS_ANDROID,
+    "//tools/cc_target_os:darwin": [
+        "-DOS_MACOSX",
+        "-DV8_OS_MACOSX",
+    ],
+    "//conditions:default": [
+        "-Xclang-only=-Wno-implicit-fallthrough",  # spaces.h
+    ],
+}) + select({
+    ":is_fastbuild": ["-O2"],
+    "//conditions:default": [""],
+}) + select({
+    ":is_debug": ["-DDEBUG"],
+    "//conditions:default": [""],
+}) + select({
+    "//tools/cc_target_os:android": [],
+    "//conditions:default": [
+        "-fno-sanitize=float-cast-overflow",  # conversions.h
+    ],
+})
+
+COPTS_TARGET_ARCH = select({
+    "//tools/target_cpu:armeabi": [
+        "-DV8_TARGET_ARCH_ARM",
+    ],
+    "//tools/target_cpu:armeabi-v7a": [
+        "-DV8_TARGET_ARCH_ARM",
+        "-DCAN_USE_ARMV7_INSTRUCTIONS",
+        "-DCAN_USE_VFP3_INSTRUCTIONS",
+    ],
+    "//tools/target_cpu:arm": [
+        "-DV8_TARGET_ARCH_ARM64",
+    ],
+    "//tools/target_cpu:arm64-v8a": [
+        "-DV8_TARGET_ARCH_ARM64",
+    ],
+    "//tools/target_cpu:haswell": [
+        "-DV8_TARGET_ARCH_X64",
+    ],
+    "//tools/target_cpu:k8": [
+        "-DV8_TARGET_ARCH_X64",
+    ],
+    "//tools/target_cpu:mips": [
+        "-DV8_TARGET_ARCH_MIPS",
+    ],
+    "//tools/target_cpu:ppc": [
+        "-DV8_TARGET_ARCH_PPC",
+        "-DV8_TARGET_ARCH_PPC64",
+        "-DV8_TARGET_ARCH_PPC_LE",
+    ],
+    "//tools/target_cpu:x86": [
+        "-DV8_TARGET_ARCH_IA32",
+    ],
+    "//tools/target_cpu:x86_64": [
+        "-DV8_TARGET_ARCH_X64",
+    ],
+})
+
+NO_COPTS = select({
+    "//tools/cc_target_os:android": "\-Wformat\-security",
+    "//conditions:default": "",
+})
+
+LINK_OPTS = select({
+    "//tools/cc_target_os:android": ["-llog"],
+    "//conditions:default": [],
+})
+
+# ------------------------------------------------------------------------------
+# Libraries
+#
+# NOTE: These are libraries used internally by the build of the third_party/v8/v6_9
+#       component. No other clients should directly depend on these internal
+#       targets.
+
+cc_library(
+    name = "core_lib",
+    srcs = [
+        ":v8_base_files",
+        ":v8_init_files",
+        ":v8_initializers_files",
+        ":v8_libbase_files",
+        ":v8_libplatform_files",
+        ":v8_libsampler_files",
+        ":v8_nosnapshot_files",
+        ":torque_generated_core_files",
+    ],
+    copts = COPTS + COPTS_TARGET_ARCH,
+    includes = ["include"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = select({
+        "//tools/cc_target_os:android": [
+            ":public_v8_header",
+        ],
+        "//conditions:default": [
+            "//base",
+            ":public_v8_header",
+        ],
+    }) + [":torque_generated_core"],
+    alwayslink = 1,
+    visibility = [":users"],
+)
+
+cc_library(
+    name = "core_with_icu_lib",
+    srcs = [
+        ":v8_base_files",
+        ":v8_icu_nosnapshot_files",
+        ":v8_init_files",
+        ":v8_initializers_files",
+        ":v8_intl_files",
+        ":v8_libbase_files",
+        ":v8_libplatform_files",
+        ":v8_libsampler_files",
+        ":torque_generated_core_files",
+    ],
+    copts = COPTS + COPTS_TARGET_ARCH + ["-DV8_INTL_SUPPORT"],
+    includes = ["include"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = select({
+        "//tools/cc_target_os:android": [
+            ":public_v8_header",
+        ],
+        "//conditions:default": [
+            "//base",
+            ":public_v8_header",
+        ],
+    }) + [
+        "//third_party/icu:icu",
+        ":torque_generated_core",
+    ],
+    alwayslink = 1,
+    visibility = [":users"],
+)
+
+cc_library(
+    name = "core_with_snapshot_lib",
+    srcs = [
+        ":v8_base_files",
+        ":v8_initializers_files",
+        ":v8_libbase_files",
+        ":v8_libsampler_files",
+        ":v8_libplatform_files",
+        ":torque_generated_core_files",
+    ] + select({
+        ":simulator_required_arm64": [
+            ":v8_snapshot_arm64_files",
+        ],
+        ":simulator_required_armeabi-v7a": [
+            ":unsupported_32_bit_snapshot",
+        ],
+        ":simulator_required_armeabi": [
+            ":unsupported_32_bit_snapshot",
+        ],
+        "//conditions:default": [
+            ":v8_snapshot_files",
+        ],
+    }),
+    copts = COPTS + COPTS_TARGET_ARCH,
+    includes = ["include"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = select({
+        "//tools/cc_target_os:android": [
+            ":public_v8_header",
+        ],
+        "//conditions:default": [
+            "//base",
+            ":public_v8_header",
+        ],
+    }) + [":torque_generated_core"],
+    alwayslink = 1,
+    visibility = [":users"],
+)
+
+cc_library(
+    name = "core_with_icu_and_snapshot_lib",
+    srcs = [
+        ":v8_base_files",
+        ":v8_initializers_files",
+        ":v8_libbase_files",
+        ":v8_libsampler_files",
+        ":v8_libplatform_files",
+        ":v8_intl_files",
+        ":torque_generated_core_files",
+    ] + select({
+        ":simulator_required_armeabi-v7a": [
+            ":unsupported_32_bit_snapshot",
+        ],
+        ":simulator_required_armeabi": [
+            ":unsupported_32_bit_snapshot",
+        ],
+        "//conditions:default": [
+            ":v8_icu_snapshot_files",
+        ],
+    }),
+    copts = COPTS + COPTS_TARGET_ARCH + ["-DV8_INTL_SUPPORT"],
+    includes = ["include"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = select({
+        "//tools/cc_target_os:android": [
+            ":public_v8_header",
+        ],
+        "//conditions:default": [
+            "//base",
+            ":public_v8_header",
+        ],
+    }) + [
+        "//third_party/icu:icu",
+        ":torque_generated_core",
+    ],
+    alwayslink = 1,
+    visibility = [":users"],
+)
+
+cc_library(
+    name = "d8_lib",
+    srcs = [
+        ":d8_files",
+    ],
+    copts = COPTS + COPTS_TARGET_ARCH,
+    includes = ["include"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = [":core_lib"],
+    alwayslink = 1,
+    visibility = [":users"],
+)
+
+# -----------------------------------------------------------------------------
+# Binaries
+
+cc_binary(
+    name = "d8",
+    srcs = [
+        ":d8_files",
+    ],
+    copts = COPTS,
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = [
+        ":core_lib",
+    ],
+    visibility = [":users"],
+)
+
+cc_binary(
+    name = "icu/d8",
+    srcs = [
+        ":d8_files",
+    ],
+    copts = COPTS,
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = [
+        ":core_with_icu_lib",
+    ],
+    visibility = [":users"],
+)
+
+cc_binary(
+    name = "with_snapshot/d8",
+    srcs = [
+        ":d8_files",
+    ],
+    copts = COPTS,
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = [
+        ":core_with_snapshot_lib",
+    ],
+    visibility = [":users"],
+)
+
+cc_binary(
+    name = "with_icu_and_snapshot/d8",
+    srcs = [
+        ":d8_files",
+    ],
+    copts = COPTS + ["-DV8_INTL_SUPPORT"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = [
+        ":core_with_icu_and_snapshot_lib",
+    ],
+    visibility = [":users"],
+)
+
+# -----------------------------------------------------------------------------
+# Source generators
+
+cc_binary(
+    name = "mksnapshot",
+    srcs = ["src/snapshot/mksnapshot.cc"],
+    copts = COPTS + COPTS_TARGET_ARCH,
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = [":core_lib"],
+)
+
+cc_binary(
+    name = "mksnapshot_icu",
+    srcs = ["src/snapshot/mksnapshot.cc"],
+    copts = COPTS + COPTS_TARGET_ARCH + ["-DV8_INTL_SUPPORT"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = [":core_with_icu_lib"],
+)
+
+cc_binary(
+    name = "mksnapshot_with_simulator_arm64",
+    srcs = [
+        ":src/snapshot/mksnapshot.cc",
+        ":v8_base_arm64_files",
+        ":v8_init_files",
+        ":v8_initializers_arm64_files",
+        ":v8_libbase_files",
+        ":v8_libplatform_files",
+        ":v8_libsampler_files",
+        ":v8_nosnapshot_files",
+        ":torque_generated_core_files",
+    ],
+    copts = COPTS + ["-DV8_TARGET_ARCH_ARM64"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = [
+        "//base",
+        ":public_v8_header",
+        ":torque_generated_core",
+    ],
+)
+
+filegroup(
+    name = "v8_snapshot_arm64_files",
+    srcs = [
+        ":js2c_experimental_extras",
+        ":js2c_extras",
+        ":js2c",
+        ":run_mksnapshot_arm64",
+        "src/setup-isolate-deserialize.cc",
+    ],
+)
+
+filegroup(
+    name = "v8_icu_nosnapshot_files",
+    srcs = [
+        ":js2c_experimental_extras",
+        ":js2c_extras",
+        ":js2c_icu",
+        "src/snapshot/snapshot-empty.cc",
+    ],
+)
+
+filegroup(
+    name = "v8_icu_snapshot_files",
+    srcs = [
+        ":run_mksnapshot_icu",
+        ":js2c_icu",
+        ":js2c_experimental_extras",
+        ":js2c_extras",
+        "src/setup-isolate-deserialize.cc",
+    ],
+)
+
+filegroup(
+    name = "v8_intl_files",
+    srcs = [
+        "src/builtins/builtins-intl.cc",
+        "src/builtins/builtins-intl.h",
+        "src/builtins/builtins-intl-gen.cc",
+        "src/char-predicates.cc",
+        "src/intl.cc",
+        "src/intl.h",
+        "src/objects/intl-objects.cc",
+        "src/objects/intl-objects.h",
+        "src/objects/intl-objects-inl.h",
+        "src/objects/js-locale.cc",
+        "src/objects/js-locale.h",
+        "src/objects/js-locale-inl.h",
+        "src/objects/js-relative-time-format-inl.h",
+        "src/objects/js-relative-time-format.cc",
+        "src/objects/js-relative-time-format.h",
+        "src/runtime/runtime-intl.cc",
+    ],
+)
+
+py_binary(
+    name = "js2c_script",
+    main = "g3tools/js2c.py",
+    srcs = [
+        "g3tools/js2c.py",
+        "g3tools/jsmin.py",
+    ],
+    paropts = [
+        "--strip",
+        "--compile",
+    ],
+)
+
+genrule(
+    name = "js2c_icu",
+    srcs = [
+        ":js2c_files",
+        "src/js/intl.js",
+    ],
+    outs = ["libraries_icu.cc"],
+    cmd = "$(location :js2c_script) $@ CORE $(SRCS)",
+    tools = [":js2c_script"],
+)
+
+vardef("PREDICTABLE", "--random-seed=314159265")
+
+genrule(
+    name = "run_mksnapshot_icu",
+    outs = ["snapshot_icu.cc"],
+    cmd = "$(location :mksnapshot_icu) " + varref("PREDICTABLE") + " --startup-src $@",
+    tools = [":mksnapshot_icu"],
+)
+
+genrule(
+    name = "run_mksnapshot_arm64",
+    outs = ["snapshot_arm64.cc"],
+    cmd = "$(location :mksnapshot_with_simulator_arm64) " + varref("PREDICTABLE") + " --startup-src $@",
+    tools = [":mksnapshot_with_simulator_arm64"],
+)
+
+genrule(
+    name = "unsupported_32_bit_snapshot",
+    outs = ["unsupported_32_bit_snapshot.cc"],
+    cmd = select({
+        "//tools/target_cpu:haswell": "echo '' > $@",
+        "//tools/target_cpu:k8": "echo '' > $@",
+        "//tools/target_cpu:arm64-v8a": "echo '' > $@",
+        "//tools/target_cpu:x86_64": "echo '' > $@",
+        # Fail for 32-bit target CPUs. We cannot build 32-bit simulator based snapshot on 64-bit host.
+        # See https://groups.google.com/a/google.com/d/msg/build-help/jR3JID35DxQ/DLSaKLc3AgAJ
+    }),
+)
+
+cc_library(
+    name = "torque_generated_core",
+    hdrs = [":run_torque"],
+    include_prefix = "torque-generated",
+)
+
+cc_binary(
+    name = "torque",
+    srcs = [
+        "src/torque/TorqueBaseVisitor.cpp",
+        "src/torque/TorqueBaseVisitor.h",
+        "src/torque/TorqueLexer.cpp",
+        "src/torque/TorqueLexer.h",
+        "src/torque/TorqueParser.cpp",
+        "src/torque/TorqueParser.h",
+        "src/torque/TorqueVisitor.cpp",
+        "src/torque/TorqueVisitor.h",
+        "src/torque/ast.h",
+        "src/torque/ast-generator.cc",
+        "src/torque/ast-generator.h",
+        "src/torque/contextual.h",
+        "src/torque/declarable.cc",
+        "src/torque/declarable.h",
+        "src/torque/declaration-visitor.cc",
+        "src/torque/declaration-visitor.h",
+        "src/torque/declarations.cc",
+        "src/torque/declarations.h",
+        "src/torque/file-visitor.cc",
+        "src/torque/file-visitor.h",
+        "src/torque/global-context.h",
+        "src/torque/implementation-visitor.cc",
+        "src/torque/implementation-visitor.h",
+        "src/torque/scope.cc",
+        "src/torque/scope.h",
+        "src/torque/torque.cc",
+        "src/torque/type-oracle.h",
+        "src/torque/types.cc",
+        "src/torque/types.h",
+        "src/torque/utils.cc",
+        "src/torque/utils.h",
+        "v8_libbase_files",
+    ],
+    copts = COPTS + COPTS_TARGET_ARCH + ["-fexceptions"],
+    defines = ["ANTLR4CPP_STATIC"],
+    features = ["-use_header_modules"],
+    includes = ["third_party/antlr4/runtime/Cpp/runtime/src"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+    deps = [":antlr4"],
+)
+
+cc_library(
+    name = "antlr4",
+    srcs = [
+        "third_party/antlr4/runtime/Cpp/runtime/src/ANTLRErrorListener.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ANTLRErrorListener.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ANTLRErrorStrategy.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ANTLRErrorStrategy.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ANTLRFileStream.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ANTLRFileStream.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ANTLRInputStream.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ANTLRInputStream.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/BailErrorStrategy.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/BailErrorStrategy.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/BaseErrorListener.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/BaseErrorListener.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/BufferedTokenStream.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/BufferedTokenStream.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/CharStream.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/CharStream.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/CommonToken.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/CommonToken.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/CommonTokenFactory.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/CommonTokenFactory.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/CommonTokenStream.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/CommonTokenStream.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ConsoleErrorListener.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ConsoleErrorListener.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/DefaultErrorStrategy.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/DefaultErrorStrategy.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/DiagnosticErrorListener.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/DiagnosticErrorListener.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Exceptions.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Exceptions.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/FailedPredicateException.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/FailedPredicateException.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/InputMismatchException.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/InputMismatchException.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/IntStream.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/IntStream.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/InterpreterRuleContext.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/InterpreterRuleContext.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Lexer.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Lexer.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/LexerInterpreter.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/LexerInterpreter.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/LexerNoViableAltException.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/LexerNoViableAltException.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ListTokenSource.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ListTokenSource.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/NoViableAltException.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/NoViableAltException.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Parser.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Parser.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ParserInterpreter.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ParserInterpreter.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ParserRuleContext.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ParserRuleContext.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ProxyErrorListener.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/ProxyErrorListener.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/RecognitionException.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/RecognitionException.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Recognizer.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Recognizer.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/RuleContext.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/RuleContext.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/RuleContextWithAltNum.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/RuleContextWithAltNum.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/RuntimeMetaData.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/RuntimeMetaData.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Token.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Token.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/TokenFactory.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/TokenSource.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/TokenSource.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/TokenStream.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/TokenStream.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/TokenStreamRewriter.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/TokenStreamRewriter.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/UnbufferedCharStream.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/UnbufferedCharStream.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/UnbufferedTokenStream.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/UnbufferedTokenStream.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Vocabulary.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/Vocabulary.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/WritableToken.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/WritableToken.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/antlr4-common.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/antlr4-runtime.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATN.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATN.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNConfig.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNConfig.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNConfigSet.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNConfigSet.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNDeserializationOptions.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNDeserializationOptions.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNDeserializer.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNDeserializer.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNSerializer.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNSerializer.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNSimulator.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNSimulator.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ATNType.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/AbstractPredicateTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/AbstractPredicateTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ActionTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ActionTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/AmbiguityInfo.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/AmbiguityInfo.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ArrayPredictionContext.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ArrayPredictionContext.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/AtomTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/AtomTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/BasicBlockStartState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/BasicBlockStartState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/BasicState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/BasicState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/BlockEndState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/BlockEndState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/BlockStartState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/BlockStartState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ContextSensitivityInfo.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ContextSensitivityInfo.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/DecisionEventInfo.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/DecisionEventInfo.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/DecisionInfo.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/DecisionInfo.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/DecisionState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/DecisionState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/EmptyPredictionContext.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/EmptyPredictionContext.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/EpsilonTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/EpsilonTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ErrorInfo.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ErrorInfo.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LL1Analyzer.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LL1Analyzer.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerATNConfig.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerATNConfig.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerATNSimulator.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerATNSimulator.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerActionExecutor.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerActionExecutor.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerActionType.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerChannelAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerChannelAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerCustomAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerCustomAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerIndexedCustomAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerIndexedCustomAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerModeAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerModeAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerMoreAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerMoreAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerPopModeAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerPopModeAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerPushModeAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerPushModeAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerSkipAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerSkipAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerTypeAction.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LexerTypeAction.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LookaheadEventInfo.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LookaheadEventInfo.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LoopEndState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/LoopEndState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/NotSetTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/NotSetTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/OrderedATNConfigSet.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/OrderedATNConfigSet.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ParseInfo.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ParseInfo.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ParserATNSimulator.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ParserATNSimulator.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PlusBlockStartState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PlusBlockStartState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PlusLoopbackState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PlusLoopbackState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PrecedencePredicateTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PrecedencePredicateTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PredicateEvalInfo.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PredicateEvalInfo.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PredicateTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PredicateTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PredictionContext.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PredictionContext.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PredictionMode.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/PredictionMode.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ProfilingATNSimulator.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/ProfilingATNSimulator.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/RangeTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/RangeTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/RuleStartState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/RuleStartState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/RuleStopState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/RuleStopState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/RuleTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/RuleTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/SemanticContext.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/SemanticContext.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/SetTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/SetTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/SingletonPredictionContext.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/SingletonPredictionContext.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/StarBlockStartState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/StarBlockStartState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/StarLoopEntryState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/StarLoopEntryState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/StarLoopbackState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/StarLoopbackState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/TokensStartState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/TokensStartState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/Transition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/Transition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/WildcardTransition.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/atn/WildcardTransition.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/dfa/DFA.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/dfa/DFA.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/dfa/DFASerializer.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/dfa/DFASerializer.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/dfa/DFAState.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/dfa/DFAState.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/dfa/LexerDFASerializer.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/dfa/LexerDFASerializer.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/InterpreterDataReader.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/InterpreterDataReader.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/Interval.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/Interval.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/IntervalSet.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/IntervalSet.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/MurmurHash.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/MurmurHash.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/Predicate.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/misc/Predicate.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/Any.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/Any.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/Arrays.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/Arrays.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/BitSet.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/CPPUtils.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/CPPUtils.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/Declarations.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/StringUtils.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/StringUtils.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/guid.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/support/guid.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/AbstractParseTreeVisitor.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ErrorNode.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ErrorNode.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ErrorNodeImpl.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ErrorNodeImpl.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/IterativeParseTreeWalker.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/IterativeParseTreeWalker.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ParseTree.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ParseTree.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ParseTreeListener.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ParseTreeListener.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ParseTreeProperty.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ParseTreeVisitor.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ParseTreeVisitor.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ParseTreeWalker.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/ParseTreeWalker.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/TerminalNode.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/TerminalNode.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/TerminalNodeImpl.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/TerminalNodeImpl.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/Trees.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/Trees.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/Chunk.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/Chunk.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/ParseTreeMatch.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/ParseTreeMatch.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/ParseTreePattern.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/ParseTreePattern.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/ParseTreePatternMatcher.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/ParseTreePatternMatcher.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/RuleTagToken.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/RuleTagToken.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/TagChunk.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/TagChunk.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/TextChunk.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/TextChunk.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/TokenTagToken.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/pattern/TokenTagToken.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPath.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPath.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathElement.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathElement.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathLexer.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathLexer.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathLexerErrorListener.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathLexerErrorListener.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathRuleAnywhereElement.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathRuleAnywhereElement.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathRuleElement.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathRuleElement.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathTokenAnywhereElement.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathTokenAnywhereElement.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathTokenElement.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathTokenElement.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathWildcardAnywhereElement.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathWildcardAnywhereElement.h",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathWildcardElement.cpp",
+        "third_party/antlr4/runtime/Cpp/runtime/src/tree/xpath/XPathWildcardElement.h",
+    ],
+    copts = COPTS + COPTS_TARGET_ARCH + ["-fexceptions"],
+    features = ["-use_header_modules"],
+    includes = ["third_party/antlr4/runtime/Cpp/runtime/src"],
+    linkopts = LINK_OPTS,
+    nocopts = NO_COPTS,
+)
+
+filegroup(
+    name = "antlr4_files",
+    srcs = ["third_party/antlr4/runtime/Cpp/runtime/src/antlr4-runtime.h"],
+)
+
+# ------------------------------------------------------------------------------
+# Tests
+
+filegroup(
+    name = "build_config",
+    srcs = [
+        "v8_build_config.json",
+        "with_icu_and_snapshot/v8_build_config.json",
+        "with_snapshot/v8_build_config.json",
+    ],
+)
+
+test_suite(
+    name = "mjsunit_regtest",
+    tests = [
+        ":mjsunit_regtest_d8",
+        ":mjsunit_regtest_d8_with_icu_and_snapshot",
+        ":mjsunit_regtest_d8_with_snapshot",
+    ],
+)
+
+# Benchmarks.
+filegroup(
+    name = "benchmark_files",
+    srcs = glob(["benchmarks/*.js"]),
+)
+
+# Runs mjunit with d8.
+sh_test(
+    name = "mjsunit_regtest_d8",
+    size = "large",
+    srcs = ["g3tools/mjsunit_regtest_d8.sh"],
+    data = [
+        "//testing/shbase",
+        "//third_party/v8/v6_9:build_config",
+        "//third_party/v8/v6_9:d8",
+        "test/.",
+        "tools/.",
+    ] + glob(["test/**"]) + glob(["tools/**"]),
+)
+
+# Runs mjunit with d8_with_snapshot
+sh_test(
+    name = "mjsunit_regtest_d8_with_snapshot",
+    size = "large",
+    srcs = ["g3tools/mjsunit_regtest_d8_with_snapshot.sh"],
+    data = [
+        "//testing/shbase",
+        "//third_party/v8/v6_9:build_config",
+        "//third_party/v8/v6_9:with_snapshot/d8",
+        "test/.",
+        "tools/.",
+    ] + glob(["test/**"]) + glob(["tools/**"]),
+)
+
+# Runs mjunit with d8_with_icu_and_snapshot
+sh_test(
+    name = "mjsunit_regtest_d8_with_icu_and_snapshot",
+    size = "large",
+    srcs = ["g3tools/mjsunit_regtest_d8_with_icu_and_snapshot.sh"],
+    data = [
+        "//testing/shbase",
+        "//third_party/v8/v6_9:build_config",
+        "//third_party/v8/v6_9:with_icu_and_snapshot/d8",
+        "test/.",
+        "tools/.",
+    ] + glob(["test/**"]) + glob(["tools/**"]),
+)
+
+# ------------------------------------------------------------------------------
+# Targets below are generated by the following steps:
+# > cd third_party/v8/patches
+# > python v8_gn_to_build.py --upstream_dir=$PATH_TO_UPSTREAM_V8\
+#   --output_build_file=$(pwd)/../v6_8/BUILD.generated\
+#   --config_file=$(pwd)/config.json
+
 genrule(
     name = "run_torque",
     # Do not sort: loaded in order.
